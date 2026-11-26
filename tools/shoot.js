@@ -273,7 +273,9 @@ const SCENES = [
     act: async (p) => {
       await p.clickSel('#fabSettings'); await p.wait(300);
       await p.eval(`document.getElementById('schedSec').scrollIntoView()`); await p.wait(100);
-      p.expect(await p.eval(`document.getElementById('impNote').textContent`) === '浏览器版不支持识别海报，请用 App', '浏览器里应提示用 App');
+      var note = await p.eval(`document.getElementById('impNote').textContent`);
+      p.expect(note.startsWith('浏览器版不支持识别海报，请用 App'), '浏览器里应提示用 App');
+      p.expect(note.includes('太湖龙之梦度假区」→ 演出安排 → 演艺城节目单'), '应给出最新节目单的获取渠道');
       p.expect(await p.eval(`document.getElementById('impCam').disabled && document.getElementById('impGal').disabled`), '浏览器里两个按钮应置灰');
     } },
   { name: 'p2_busy', root: WEB, q: NOW, bridge: true, fix: true,

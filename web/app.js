@@ -55,6 +55,8 @@
   // 身边 100 m 内已经有校准点，就别再劝人校准了（IDW 修正在这个范围内仍有一半以上的分量）。
   var WEAK_CALIB_NEAR_M = 100;
   var NOTICE_KEY = 'lzm.notice.v1';
+  // 景区每期海报都发在这里（2026-11-26 核实）；导入入口、过期横幅、使用须知三处共用，路径变了只改这一行。
+  var LATEST_SRC = '微信公众号「太湖龙之梦度假区」→ 演出安排 → 演艺城节目单';
   var WEEK = '日一二三四五六';
   var NOREG_MSG = '这张导览图暂时没法和手机定位对上，只能看演出时间。\n可在「设置 → 位置校准」里现场对准两处地点来开启。';
 
@@ -1330,7 +1332,7 @@
     if (out) {
       var early = SCHED.validFrom && L.ymd(t) < SCHED.validFrom;
       setText(bannerEl, (early ? '时间表从 ' + md(SCHED.validFrom) + ' 起才生效' : '已超出有效期：时间表只覆盖 ' + validSpan()) +
-        '，今天按默认规则显示，以现场为准。点这里导入新海报');
+        '，今天按默认规则显示，以现场为准。最新节目单见' + LATEST_SRC + '，存图后点这里导入');
     }
     if (bannerEl.hidden === out) {
       bannerEl.hidden = !out;
@@ -1424,9 +1426,10 @@
     renderSchedList();
     var ocr = ocrState();
     $('impCam').disabled = $('impGal').disabled = ocr !== 'ok';
-    setText($('impNote'), ocr === 'browser' ? '浏览器版不支持识别海报，请用 App'
-      : ocr === 'off' ? '这台手机暂时用不了海报识别'
-      : '拍下景区新一期的「演艺时间安排」海报，或从相册选一张截图；识别后先预览、确认了才会换上。');
+    setText($('impNote'), (ocr === 'browser' ? '浏览器版不支持识别海报，请用 App。'
+      : ocr === 'off' ? '这台手机暂时用不了海报识别。'
+      : '最新节目单在' + LATEST_SRC + '，长按存到相册后点「从相册选」；也可以直接拍现场海报。识别后先预览，确认了才会换上。') +
+      (ocr === 'ok' ? '' : '最新节目单可在' + LATEST_SRC + '查看。'));
     $('impNote').classList.toggle('muted-note', ocr !== 'ok');
     var n = state.calib.length, last = state.calib[n - 1];
     setText($('calibCount'), n
@@ -2103,7 +2106,7 @@
       ['音乐广场一带偏差更大', '那一带没有对准用的参照点，位置是推算出来的。'],
       ['位置不对就校准一下', '「设置 → 位置校准」：站在认得出的地方（出入口、桥头），把准星对上，附近就准了。'],
       ['演出时间以现场为准', '按景区演艺海报（' + (SCHED.version || '') + '）录入，只覆盖 ' + validSpan() +
-        '；遇天气或运营调整，以现场广播为准。'],
+        '；遇天气或运营调整，以现场广播为准。最新节目单见' + LATEST_SRC + '，存图后可在「设置 → 导入新海报」导入。'],
       ['步行时间仅供参考', '按直线距离估算，实际要绕路、排队，宁可早点出发。'],
     ].map(function (it, i) {
       var body = esc(it[1]);
