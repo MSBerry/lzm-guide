@@ -73,8 +73,11 @@ import java.util.Locale
  * 留档图经 [PosterScanner.serve] 以虚拟 https 地址给页面当 `<img src>`。
  *
  * 调试钩子（只在 debuggable 包里生效）：
- * `adb shell am start -n com.lzm.guide/.MainActivity --es lzm_ocr_test <设备上的图片路径>`，
+ * `adb shell am start -S -n com.lzm.guide/.MainActivity --es lzm_ocr_test <设备上的图片路径>`，
  * 结果写到 `getExternalFilesDir(null)/ocr_test.json`。
+ * - 要带 `-S`：App 已在前台时，同组件的 Intent 系统只把任务提到前台，不投递；
+ * - 图要放在 `/sdcard/Android/data/com.lzm.guide/files/` 下：本 App 不申请存储权限，
+ *   `/sdcard/Download` 里 adb push 进去的图读不了（vivo Android 16 实测 EACCES，结果里是 `decode_failed`）。
  *
  * ## 封面与兜底（[PageCover]）
  * ```
@@ -476,7 +479,8 @@ class MainActivity : Activity() {
                 val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
                     .putExtra(MediaStore.EXTRA_OUTPUT, uri)
                     .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                // EXTRA_OUTPUT 里的 Uri 不随 flags 授权，要挂进 ClipData 才会把写权限给到相机
+                // 授权 flags 只作用于 data / ClipData 里的 Uri，管不到 extras。框架启动时会替 IMAGE_CAPTURE 自动挪一次，
+                // 但那是隐式行为，显式挂上不依赖它
                 intent.clipData = ClipData.newRawUri("", uri)
                 startForPoster(intent, REQ_CAMERA, "没有可用的相机应用")
             }
@@ -537,9 +541,6 @@ class MainActivity : Activity() {
     /** `am start --es lzm_ocr_test <路径>`：验收对拍用。release 包不响应，免得任何 App 都能借它读本 App 能读的文件。 */
     private fun handleOcrTest(intent: Intent?) {
         val path = intent?.getStringExtra(EXTRA_OCR_TEST) ?: return
-        PosterOcr.PROF_THREADS = intent.getIntExtra("lzm_ocr_threads", 0)
-        PosterOcr.PROF_XNN = intent.getBooleanExtra("lzm_ocr_xnn", false)
-        PosterOcr.PROF_ORT = intent.getBooleanExtra("lzm_ocr_prof", false)
         intent.removeExtra(EXTRA_OCR_TEST) // recreate 时 getIntent() 还是这一个，别再跑一遍
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
         val out = File(getExternalFilesDir(null), "ocr_test.json")

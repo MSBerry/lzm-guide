@@ -2711,5 +2711,5 @@
   }
  ],
  "engine": "onnxruntime-android 1.23.2 PP-OCRv4 mobile ch det+rec, no cls",
- "ms": 6917
+ "ms": 5351
 }

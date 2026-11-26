@@ -14,6 +14,10 @@ import java.math.RoundingMode
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -41,7 +45,8 @@ import kotlin.math.min
  *
  * ## 线程约定
  * **[recognize] 与 [close] 必须在同一条后台线程上串行调用**（[PosterScanner] 的单线程 executor）：
- * 识别跑到一半时 close 掉 session 是 native 层的 use-after-free。[isAvailable] 任意线程可读。
+ * 识别跑到一半时 close 掉 session 是 native 层的 use-after-free。rec 段内部再分给 [recPool] 并行，
+ * 但 [recognize] 返回（含抛异常）前一定等齐所有批次，所以上面这条对调用方仍然成立。[isAvailable] 任意线程可读。
  */
 internal class PosterOcr(private val context: Context) : AutoCloseable {
 
@@ -53,6 +58,11 @@ internal class PosterOcr(private val context: Context) : AutoCloseable {
     class EngineException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
     private val env: OrtEnvironment by lazy { OrtEnvironment.getEnvironment() }
+
+    /** rec 分批并行的工作线程，见 [recognizeCrops]。 */
+    private val recPool: ExecutorService by lazy {
+        Executors.newFixedThreadPool(REC_WORKERS) { Thread(it, "PosterOcrRec") }
+    }
     private var det: Loaded? = null
     private var rec: Loaded? = null
     private var chars: List<String> = emptyList()
@@ -124,11 +134,7 @@ internal class PosterOcr(private val context: Context) : AutoCloseable {
         if (quads.isEmpty()) return Result(emptyList(), t1 - t0, t2 - t1, 0)
 
         onStage("recognizing")
-        val tc = SystemClock.elapsedRealtime()
-        val crops = quads.map { crop(img, it) }
-        Log.d(TAG, "PROF crop=${SystemClock.elapsedRealtime() - tc} n=${crops.size}")
-        val texts = recognizeCrops(crops)
-        if (PROF_ORT) { Log.d(TAG, "PROF ort rec=" + rec!!.session.endProfiling() + " det=" + det!!.session.endProfiling()) }
+        val texts = recognizeCrops(img, quads)
         val t3 = SystemClock.elapsedRealtime()
 
         val lines = ArrayList<Line>(quads.size)
@@ -147,6 +153,8 @@ internal class PosterOcr(private val context: Context) : AutoCloseable {
     override fun close() {
         if (closed) return
         closed = true
+        // recognize 返回前已等齐所有批次，这里池子是空闲的，直接关
+        recPool.shutdown()
         releaseSessions()
     }
 
@@ -177,8 +185,9 @@ internal class PosterOcr(private val context: Context) : AutoCloseable {
         if (det != null && rec != null) return
         if (loadFailed) throw EngineException("模型加载失败过，不再重试")
         try {
-            val d = det ?: load(DET_MODEL).also { det = it }
-            val r = rec ?: load(REC_MODEL).also { rec = it }
+            val d = det ?: load(DET_MODEL, intraThreads = 0).also { det = it }
+            // rec 的并行在批与批之间（见 recognizeCrops），单次 Run 只用调用线程，免得几个 Run 抢同一个线程池
+            val r = rec ?: load(REC_MODEL, intraThreads = 1).also { rec = it }
             chars = readCharacters(r.session)
             Log.i(TAG, "模型就绪 det=${d.input} rec=${r.input} chars=${chars.size} ort=${env.version}")
         } catch (e: OrtException) {
@@ -198,17 +207,15 @@ internal class PosterOcr(private val context: Context) : AutoCloseable {
         throw EngineException(what, e)
     }
 
-    private fun load(asset: String): Loaded {
+    /** [intraThreads] 为 0 时用 ORT 默认线程数。 */
+    private fun load(asset: String, intraThreads: Int): Loaded {
         val bytes = context.assets.open(asset).use { it.readBytes() }
         val options = OrtSession.SessionOptions()
         try {
             // 与 RapidOCR 的 OrtInferSession 同配置：全量图优化、关 CPU arena（rec 每批输入宽度都不一样，arena 只会越攒越大）
             options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
             options.setCPUArenaAllocator(false)
-            if (PROF_THREADS > 0) options.setIntraOpNumThreads(PROF_THREADS)
-            if (PROF_XNN) options.addXnnpack(mapOf("intra_op_num_threads" to "6"))
-            if (PROF_ORT) options.enableProfiling(context.filesDir.absolutePath + "/ortprof_" + asset.take(16))
-            Log.d(TAG, "PROF threads=$PROF_THREADS")
+            if (intraThreads > 0) options.setIntraOpNumThreads(intraThreads)
             return Loaded(env.createSession(bytes, options), options)
         } catch (e: OrtException) {
             options.close()
@@ -259,12 +266,8 @@ internal class PosterOcr(private val context: Context) : AutoCloseable {
         for (i in 0 until plane) {
             for (c in 0 until 3) input.put(c * plane + i, DET_NORM[px[i * 3 + c].toInt() and 0xFF])
         }
-        val tp = SystemClock.elapsedRealtime()
         val pred = run(session, input, longArrayOf(1, 3, rh.toLong(), rw.toLong())).first
-        val tq = SystemClock.elapsedRealtime()
-        val r = dbPostProcess(pred, rw, rh, w, h)
-        Log.d(TAG, "PROF det infer=${tq - tp} post=${SystemClock.elapsedRealtime() - tq}")
-        return r
+        return dbPostProcess(pred, rw, rh, w, h)
     }
 
     /** DBPostProcess：概率图 → 原图（det 输入前的那张）上的四边形，已按阅读顺序排好。 */
@@ -293,7 +296,7 @@ internal class PosterOcr(private val context: Context) : AutoCloseable {
             mask[y * pw + pw - 1] = 0
         }
 
-        // ② 8 连通域，代替 findContours(RETR_LIST)。不要洞的轮廓：洞对应的框打分必然低于 0.5，
+        // ② 8 连通域，代替 findContours(RETR_LIST)。不要洞的轮廓：洞里框住的多是阈值以下的像素，打分过不了 0.5，
         //    桌面实测 RETR_LIST 换成 RETR_EXTERNAL 结果一行不差。每行只记最左、最右像素——凸包只需要这些点。
         val rowMin = IntArray(ph) { Int.MAX_VALUE }
         val rowMax = IntArray(ph) { -1 }
@@ -460,44 +463,70 @@ internal class PosterOcr(private val context: Context) : AutoCloseable {
         return if (c.height.toDouble() / c.width >= 1.5) rot90(c) else c
     }
 
-    private fun recognizeCrops(crops: List<BgrImage>): List<Pair<String, Double>> {
-        val session = rec!!
-        val ratios = DoubleArray(crops.size) { crops[it].width / crops[it].height.toDouble() }
+    /** 裁剪后（含转 90°）的宽高。分批要先知道宽高比，用它就不必先把所有框都裁出来。 */
+    private fun cropSize(q: Quad): Pair<Int, Int> {
+        val (cw, ch) = quadCropSize(q)
+        val w = max(cw, 1)
+        val h = max(ch, 1)
+        return if (h.toDouble() / w >= 1.5) h to w else w to h
+    }
+
+    /**
+     * 按宽高比排序、6 个一批识别。批与批之间互不相干，分给 [recPool] 并行跑，每次 Run 只用调用线程。
+     *
+     * ⚠️ 别改回「一批一批串行、让 ORT 自己多线程」：rec 模型是 48 像素高的小张量，61% 时间在逐通道卷积、
+     * 36% 在没融合的 hardswish 逐元素算子上（ORT profiler 拆的），单次 Run 内多线程几乎不涨：
+     * 串行时 rec 段默认线程数 5.2–6.4 s，改成 6 批并行、每批单线程 3.5 s（2026-11-26 vivo V2408A 同图实测）。
+     * 批的划分和 RapidOCR 完全一样，并行只改执行顺序，不改结果。
+     */
+    private fun recognizeCrops(img: BgrImage, quads: List<Quad>): List<Pair<String, Double>> {
+        val sizes = quads.map(::cropSize)
+        val ratios = DoubleArray(quads.size) { sizes[it].first / sizes[it].second.toDouble() }
         // 按宽高比排序再分批，同批补边少。numpy 的 argsort 默认不稳定，这里用稳定排序；桌面实测换 stable 结果一行不差
-        val order = crops.indices.sortedBy { ratios[it] }
-        val out = arrayOfNulls<Pair<String, Double>>(crops.size)
-        var beg = 0
-        while (beg < order.size) {
-            val batch = order.subList(beg, min(beg + REC_BATCH, order.size))
-            var maxRatio = REC_W.toDouble() / REC_H
-            for (i in batch) maxRatio = max(maxRatio, ratios[i])
-            val imgW = (REC_H * maxRatio).toInt()
-            val plane = REC_H * imgW
-            val input = directFloats(batch.size * 3 * plane) // 新分配的 direct buffer 全 0，0 就是补边值
-            for ((k, i) in batch.withIndex()) {
-                val c = crops[i]
-                val resizedW = if (ceil(REC_H * ratios[i]) > imgW) imgW else ceil(REC_H * ratios[i]).toInt()
-                val r = resizeLinear(c, resizedW, REC_H)
-                val base = k * 3 * plane
-                for (y in 0 until REC_H) {
-                    for (x in 0 until resizedW) {
-                        val p = (y * resizedW + x) * 3
-                        for (ch in 0 until 3) {
-                            input.put(base + ch * plane + y * imgW + x, REC_NORM[r.data[p + ch].toInt() and 0xFF])
-                        }
+        val batches = quads.indices.sortedBy { ratios[it] }.chunked(REC_BATCH)
+        // 最宽的批最慢，先发出去，免得最后剩它一个在跑
+        val futures = batches.indices.reversed().associateWith { b ->
+            recPool.submit(Callable { recognizeBatch(img, quads, batches[b], ratios) })
+        }
+        val out = arrayOfNulls<Pair<String, Double>>(quads.size)
+        // 有一批失败也要等其余批次跑完再抛：调用方随后可能 close()，批次还在跑时释放 session 会在 native 层崩
+        var failure: Throwable? = null
+        for ((b, f) in futures) {
+            try {
+                val res = f.get()
+                for ((k, i) in batches[b].withIndex()) out[i] = res[k]
+            } catch (e: ExecutionException) {
+                if (failure == null) failure = e.cause ?: e
+            }
+        }
+        failure?.let { throw it }
+        return out.map { it!! }
+    }
+
+    private fun recognizeBatch(img: BgrImage, quads: List<Quad>, batch: List<Int>, ratios: DoubleArray): List<Pair<String, Double>> {
+        var maxRatio = REC_W.toDouble() / REC_H
+        for (i in batch) maxRatio = max(maxRatio, ratios[i])
+        val imgW = (REC_H * maxRatio).toInt()
+        val plane = REC_H * imgW
+        val input = directFloats(batch.size * 3 * plane) // 新分配的 direct buffer 全 0，0 就是补边值
+        for ((k, i) in batch.withIndex()) {
+            val c = crop(img, quads[i])
+            val resizedW = if (ceil(REC_H * ratios[i]) > imgW) imgW else ceil(REC_H * ratios[i]).toInt()
+            val r = resizeLinear(c, resizedW, REC_H)
+            val base = k * 3 * plane
+            for (y in 0 until REC_H) {
+                for (x in 0 until resizedW) {
+                    val p = (y * resizedW + x) * 3
+                    for (ch in 0 until 3) {
+                        input.put(base + ch * plane + y * imgW + x, REC_NORM[r.data[p + ch].toInt() and 0xFF])
                     }
                 }
             }
-            val ti = SystemClock.elapsedRealtime()
-            val (probs, shape) = run(session, input, longArrayOf(batch.size.toLong(), 3, REC_H.toLong(), imgW.toLong()))
-            val td = SystemClock.elapsedRealtime()
-            val steps = shape[1].toInt()
-            val classes = shape[2].toInt()
-            for ((k, i) in batch.withIndex()) out[i] = ctcDecode(probs, k * steps * classes, steps, classes)
-            Log.d(TAG, "PROF batch w=$imgW infer=${td - ti} ctc=${SystemClock.elapsedRealtime() - td}")
-            beg += REC_BATCH
         }
-        return out.map { it!! }
+        val (probs, shape) = run(rec!!, input, longArrayOf(batch.size.toLong(), 3, REC_H.toLong(), imgW.toLong()))
+        val steps = shape[1].toInt()
+        val classes = shape[2].toInt()
+        return batch.indices.map { k -> ctcDecode(probs, k * steps * classes, steps, classes) }
     }
 
     /**
@@ -538,9 +567,10 @@ internal class PosterOcr(private val context: Context) : AutoCloseable {
             OnnxTensor.createTensor(env, input, shape).use { tensor ->
                 model.session.run(mapOf(model.input to tensor)).use { result ->
                     val out = result.get(0) as OnnxTensor
+                    // getFloatBuffer 已经从 native 拷了一份到堆上，直接拿它的数组，别再拷第二份：
+                    // 最宽那批 rec 输出近 30 MB，几批并行时两份拷贝能把 256 MB 的堆顶满
                     val fb = out.floatBuffer
-                    val arr = FloatArray(fb.remaining())
-                    fb.get(arr)
+                    val arr = if (fb.hasArray() && fb.arrayOffset() == 0) fb.array() else FloatArray(fb.remaining()).also { fb.get(it) }
                     return arr to out.info.shape
                 }
             }
@@ -568,10 +598,7 @@ internal class PosterOcr(private val context: Context) : AutoCloseable {
     /** int(round(v / 32) * 32)，Python 的 round 是银行家舍入。 */
     private fun round32(v: Int): Int = (roundHalfEven(v / 32.0) * 32).toInt()
 
-    companion object {
-        @JvmStatic var PROF_THREADS = 0
-        @JvmStatic var PROF_XNN = false
-        @JvmStatic var PROF_ORT = false
+    private companion object {
         const val TAG = "LzmOcr"
 
         const val DET_MODEL = "ch_PP-OCRv4_det_mobile.onnx"
@@ -608,6 +635,12 @@ internal class PosterOcr(private val context: Context) : AutoCloseable {
         const val REC_H = 48
         const val REC_W = 320
         const val REC_BATCH = 6
+
+        /**
+         * rec 并行批数：2026-11-26 vivo V2408A（骁龙 8 Elite，8 核）同图实测 rec 段 3 路 4.8 s、4 路 4.1 s、
+         * 6 路 3.5 s、8 路 3.7 s，取 6；核少的机器不超过核数。
+         */
+        val REC_WORKERS = min(6, Runtime.getRuntime().availableProcessors())
 
         /**
          * det 归一化 (v/255 − 0.5)/0.5 的查表。⚠️ 照 numpy 的类型提升算：v×(1/255) 是 float32，减 mean 时升成 float64，

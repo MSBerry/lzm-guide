@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 取页面底色 bar_bg 同值：Android 12+ 启动画面是「窗口底 + 图标」，同色才不会在图标外圈露出一圈色差。
+         logo 原底是白，米白只是把四朵云纹之间的留白也染成米白，不改标志本身。 -->
+    <color name="ic_launcher_background">#F7EFE3</color>
+</resources>

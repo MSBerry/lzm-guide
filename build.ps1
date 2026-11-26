@@ -28,19 +28,19 @@ New-Item -ItemType Directory -Force $distDir | Out-Null
 #（2026-11-26 换 onnxruntime 版本后不删旧包实测 31.5 MB，删了重打 24.3 MB）
 if (Test-Path $apk) { Remove-Item $apk -Force }
 
+# 写全路径：设了 NoDefaultCurrentDirectoryInExePath 的机器上 cmd 不在当前目录找 gradlew.bat
 $gradlew = Join-Path $androidDir 'gradlew.bat'
+$gradleCmd = "cd /d `"$androidDir`" && `"$gradlew`" {0} --console=plain :app:assembleDebug > `"$log`" 2>&1"
 
-function Invoke-Gradle([string]$extra) {
-    # 写全路径：设了 NoDefaultCurrentDirectoryInExePath 的机器上 cmd 不在当前目录找 gradlew.bat
-    cmd /c "cd /d `"$androidDir`" && `"$gradlew`" $extra --console=plain :app:assembleDebug > `"$log`" 2>&1"
-    return $LASTEXITCODE
-}
-
+# ⚠️ 两处 cmd 都别包进函数、别赋值给变量：那样 PowerShell 要经管道读 cmd 的输出，
+# 而构建中新拉起的 Gradle daemon 会继承这根管道的句柄、一直不关，脚本就卡在构建成功之后（2026-11-26 实测）。
 Write-Host "构建中（离线），日志：$log"
-$code = Invoke-Gradle '--offline'
+cmd /c ($gradleCmd -f '--offline')
+$code = $LASTEXITCODE
 if ($code -ne 0 -and (Select-String -Path $log -Quiet -Pattern 'No cached version', 'available for offline mode')) {
     Write-Host '缓存里缺依赖，联网重试一次（onnxruntime 走阿里云镜像）'
-    $code = Invoke-Gradle ''
+    cmd /c ($gradleCmd -f '')
+    $code = $LASTEXITCODE
 }
 
 if ($code -ne 0 -or -not (Test-Path $apk)) {
