@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        API 35+（targetSdk 36）系统强制 edge-to-edge，statusBarColor / navigationBarColor 被忽略，
+        系统栏变透明——那时的底色靠 MainActivity 根布局的背景 + 按 insets 留白来画，这里只管 34 及以下。
+        windowLight* 两项在 35+ 仍然生效（决定图标深浅）。
+    -->
+    <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/bar_bg</item>
+        <item name="android:statusBarColor">@color/bar_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/nav_bar_legacy</item>
+    </style>
+</resources>

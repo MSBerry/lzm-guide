@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 页面全在 assets 里，不需要 INTERNET。 -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!--
+        enableOnBackInvokedCallback=true：targetSdk 36 在 Android 16 上默认就走预测性返回、
+        不再回调 onBackPressed；这里显式打开，让 API 33+ 统一走 OnBackInvokedCallback，
+        33 以下走 onBackPressed，两条路都由 MainActivity 接到页面的 LZM_onBack。
+    -->
+    <application
+        android:enableOnBackInvokedCallback="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <!-- configChanges 全接住：WebView 一重建页面状态（缩放、选中的剧场）就没了。 -->
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|fontScale|density|locale|layoutDirection"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            系统相机把照片写到这里（拍海报）。不声明 CAMERA 权限：声明了却没授予时 ACTION_IMAGE_CAPTURE 会直接抛 SecurityException。
+            exported=false，外部只能凭 Intent 上临时授予的 Uri 权限访问。
+        -->
+        <provider
+            android:name=".CaptureProvider"
+            android:authorities="${applicationId}.capture"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>

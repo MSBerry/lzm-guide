@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与页面底色一致，状态栏 / 导航栏 / 启动瞬间的窗口底都用它，免得白闪。 -->
+    <color name="bar_bg">#F7EFE3</color>
+    <!-- API 24–26 没有深色导航栏图标，浅底上白图标看不见，只能退成深底。 -->
+    <color name="nav_bar_legacy">#2B2118</color>
+    <color name="cover_text">#4A3728</color>
+    <color name="icon_bg">#E8772E</color>
+    <color name="icon_fg">#FFFFFF</color>
+</resources>

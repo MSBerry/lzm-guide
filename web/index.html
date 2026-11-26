@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#F7EFE3">
+<meta name="format-detection" content="telephone=no">
+<title>龙之梦演艺导览</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="stage" class="stage loading">
+  <div id="world" class="world"><img id="mapImg" alt="太湖演艺城导览图" draggable="false"></div>
+  <div class="overlay">
+    <div id="debugLayer" class="debug-layer" hidden></div>
+    <div id="poiLayer" class="poi-layer" hidden></div>
+    <div id="markerLayer" class="marker-layer"></div>
+    <div id="me" class="me" hidden>
+      <div id="meAcc" class="me-acc"></div>
+      <svg id="meCone" class="me-cone" viewBox="-70 -70 140 140" width="140" height="140" aria-hidden="true">
+        <defs>
+          <radialGradient id="coneGrad" cx="0" cy="0" r="70" gradientUnits="userSpaceOnUse">
+            <stop offset="0.12" stop-color="#2F7DE1" stop-opacity="0.72"/>
+            <stop offset="1" stop-color="#2F7DE1" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <path id="meConePath" d="M0 0 L-35 -60.6 A70 70 0 0 1 35 -60.6 Z" fill="url(#coneGrad)"/>
+      </svg>
+      <div class="me-dot"></div>
+    </div>
+  </div>
+</div>
+
+<div id="crosshair" class="crosshair" hidden><i></i><b></b></div>
+
+<header id="topbar" class="topbar">
+  <div class="clock"><b id="clockTime">--:--</b><span id="clockDate"></span></div>
+  <button id="locChip" class="loc-chip muted" type="button"><i class="dot"></i><span id="locText">定位中…</span></button>
+</header>
+<div id="banner" class="banner" hidden></div>
+<div id="alert" class="alert" role="status" hidden>
+  <i class="alert-ic" aria-hidden="true">!</i>
+  <span id="alertText" class="alert-text"></span>
+  <button id="alertAct" class="alert-act" type="button" hidden></button>
+  <button id="alertClose" class="alert-x" type="button" aria-label="关闭这条提醒">✕</button>
+</div>
+
+<div id="fabs" class="fabs">
+  <button id="fabLocate" class="fab" type="button" aria-label="定位到我">
+    <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="currentColor"/><circle cx="12" cy="12" r="7.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 1.5v3.2M12 19.3v3.2M1.5 12h3.2M19.3 12h3.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <span>定位</span>
+  </button>
+  <button id="fabPoster" class="fab" type="button" aria-label="看原海报">
+    <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="4" y="2.5" width="16" height="19" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7.5 7h9M7.5 10.5h9M7.5 14h9M7.5 17.5h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <span>海报</span>
+  </button>
+  <button id="fabSettings" class="fab" type="button" aria-label="设置">
+    <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 8.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.6 7.6 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 2.6-1.5l2.4 1 2-3.4-2-1.6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+    <span>设置</span>
+  </button>
+</div>
+
+<section id="sheet" class="sheet is-peek" aria-label="演出场次">
+  <div id="sheetHead" class="sheet-head">
+    <div class="grip"></div>
+    <div class="sheet-title-row">
+      <button id="backBtn" class="back-btn" type="button" hidden>‹ 全部</button>
+      <h2 id="sheetTitle">离现在最近的场次</h2>
+      <span id="sheetMeta" class="sheet-meta"></span>
+    </div>
+    <div id="peek" class="peek"></div>
+  </div>
+  <div id="sheetBody" class="sheet-body"></div>
+</section>
+
+<div id="calibBar" class="calib-bar" hidden>
+  <p class="calib-tip">拖动地图，把<b>准星</b>对准你此刻真实所在的位置，再点「确定」</p>
+  <div id="calibGps" class="calib-gps"></div>
+  <div id="calibPois" class="calib-pois"></div>
+  <div id="calibWarn" class="calib-warn" hidden></div>
+  <div class="calib-actions">
+    <button id="calibCancel" class="btn" type="button">取消</button>
+    <button id="calibOk" class="btn primary" type="button">确定</button>
+  </div>
+</div>
+
+<div id="settings" class="modal" hidden>
+  <div class="modal-backdrop" data-act="close-settings"></div>
+  <div class="modal-panel" role="dialog" aria-label="设置">
+    <div class="modal-head"><h2>设置</h2><button class="icon-btn" type="button" data-act="close-settings" aria-label="关闭">✕</button></div>
+    <section id="schedSec" class="set-sec">
+      <h3>时刻表</h3>
+      <p class="set-desc">每天自动用覆盖当天的那一期；换新海报时导入一下就行。</p>
+      <div id="schedList" class="sched-list"></div>
+      <h4 class="set-sub">导入新海报</h4>
+      <p id="impNote" class="set-desc"></p>
+      <div class="set-actions">
+        <button id="impCam" class="btn primary" type="button">拍照</button>
+        <button id="impGal" class="btn" type="button">从相册选</button>
+      </div>
+    </section>
+    <section class="set-sec">
+      <h3>位置校准</h3>
+      <p class="set-desc">导览图是手绘的，不按比例，蓝点难免偏。走到一处能在图上认出来的地方（剧场门口、出入口、桥头），对准一次，附近就准了。</p>
+      <p id="calibCount" class="set-count"></p>
+      <div class="set-actions">
+        <button id="calibStart" class="btn primary" type="button">开始校准</button>
+        <button id="calibUndo" class="btn" type="button">撤销上一个</button>
+        <button id="calibClear" class="btn danger" type="button">全部清除</button>
+      </div>
+    </section>
+    <section class="set-sec">
+      <h3>使用须知</h3>
+      <p class="set-desc">地图偏差、校准方法、演出时间以现场为准等几条注意事项。</p>
+      <div class="set-actions"><button id="noticeReopen" class="btn" type="button">再看一遍</button></div>
+    </section>
+    <section class="set-sec">
+      <h3>数据</h3>
+      <p id="dataInfo" class="set-desc"></p>
+    </section>
+  </div>
+</div>
+
+<div id="notice" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel notice-panel" role="dialog" aria-labelledby="noticeTitle">
+    <h2 id="noticeTitle">使用须知</h2>
+    <ol id="noticeList" class="notice-list"></ol>
+    <button id="noticeOk" class="btn primary block" type="button">知道了</button>
+  </div>
+</div>
+
+<div id="imp" class="imp" hidden>
+  <header class="imp-head">
+    <button id="impBack" class="icon-btn imp-back" type="button" aria-label="返回">‹</button>
+    <h2 id="impTitle">导入新海报</h2>
+    <button id="impLook" class="btn sm" type="button" hidden>对照原图</button>
+  </header>
+  <div id="impBody" class="imp-body"></div>
+  <footer id="impFoot" class="imp-foot" hidden>
+    <div id="impBar" class="imp-bar" hidden></div>
+    <div class="imp-acts">
+      <button id="impDiscard" class="btn" type="button">放弃</button>
+      <button id="impOk" class="btn primary" type="button">确认导入</button>
+    </div>
+  </footer>
+</div>
+
+<div id="poster" class="poster" hidden>
+  <div id="posterStage" class="poster-stage">
+    <div id="posterWorld" class="world"><img id="posterImg" alt="演艺时间安排海报" draggable="false"><div id="posterMark" class="poster-mark" hidden></div></div>
+  </div>
+  <p id="posterMsg" class="poster-msg" hidden></p>
+  <button id="posterClose" class="poster-close" type="button" aria-label="关闭海报">✕</button>
+  <p class="poster-hint">双指缩放 · 双击放大</p>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<pre id="dbg" class="dbg" hidden></pre>
+
+<script src="data/schedule.js"></script>
+<script src="data/venues.js"></script>
+<script src="data/geo.js"></script>
+<script src="logic.js"></script>
+<script src="poster.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

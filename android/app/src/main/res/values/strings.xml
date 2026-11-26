@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">龙之梦演艺导览</string>
+    <string name="load_failed">页面没加载出来</string>
+    <string name="reload">重新加载</string>
+</resources>
